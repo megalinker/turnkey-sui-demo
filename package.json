@@ -9,6 +9,12 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@mysten/sui": "^1.45.2",
+    "@noble/hashes": "^2.0.1",
+    "@turnkey/core": "^1.8.3",
+    "@turnkey/http": "^3.15.0",
+    "@turnkey/react-wallet-kit": "^1.6.3",
+    "@turnkey/sdk-server": "^4.12.1",
     "next": "16.0.9",
     "react": "19.2.1",
     "react-dom": "19.2.1"
