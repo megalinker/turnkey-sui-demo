@@ -1,19 +1,24 @@
-# Next.js + Turnkey + Sui (Google Auth Demo)
+# Next.js + Turnkey + Sui (Google Auth + Generic Move Calls)
 
 This is a **Next.js 14+** application that demonstrates how to authenticate users via **Google OAuth** (using Turnkey's Embedded Wallet Kit) and execute **Sui Testnet** transactions using a server-side Turnkey wallet.
 
+It goes beyond simple transfers by implementing a **Generic Move Call** engine, allowing the frontend to trigger *any* smart contract function while the backend handles the security, transaction building, and signing.
+
 ## Features
 
-- **Authentication**: Login with Google (via Turnkey Auth Proxy).
-- **Backend Signing**: Securely sign transactions on the server using `@turnkey/sdk-server`.
+- **Authentication**: 
+  - Login with Google (via Turnkey Auth Proxy).
+  - Loading states to prevent UI flicker.
+- **Backend Signing**: 
+  - Securely sign transactions on the server using `@turnkey/sdk-server`.
+  - Keys never leave the Turnkey secure enclave; the server only holds API keys.
 - **Sui Integration**:
   - Dynamically derive Sui addresses from Turnkey Private Keys.
-  - Manually construct Sui-compliant Ed25519 signatures.
-  - Execute transactions on the Sui Testnet.
-- **UI**:
-  - Loading states (prevents login flicker).
-  - Real-time balance refreshing.
-  - Transaction status reporting.
+  - **Manual Signature Serialization**: Implements the Sui Ed25519 serialization standard manually (fixing recent SDK deprecations).
+- **Functionality**:
+  - **View Balance**: Real-time refreshing of SUI balance.
+  - **Simple Transfer**: Send SUI to any address.
+  - **Generic Move Calls**: Execute *any* Sui Move function (e.g., `pay::split_and_transfer`, NFT mints) by passing JSON configuration from the frontend.
 
 ---
 
@@ -82,21 +87,53 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ---
 
-## How It Works
+## Usage
 
-### Frontend (`src/app/page.tsx`)
-1. Uses `@turnkey/react-wallet-kit` to handle the OAuth flow.
-2. Checks `clientState` to show a loading spinner while initializing.
-3. Once authenticated (`user` is present), it fetches the wallet data from your backend.
+### 1. Funding the Wallet
+Since this example uses a server-side key, you need to fund the **derived address**:
+1. Run the app and log in with Google.
+2. Copy the **Address** shown in the dashboard.
+3. Go to the [Sui Discord Faucet](https://discord.gg/sui) (`#testnet-faucet` channel) and type:
+   `!faucet <YOUR_ADDRESS>`
+4. Click **Refresh** in the app to see your balance.
 
-### Backend (`src/lib/server-turnkey.ts`)
-1. Initializes `@turnkey/sdk-server` with your API keys.
-2. **`getSuiWalletInfo`**: Dynamically fetches the private key info from Turnkey to derive the public key and Sui address. It *never* exposes the private key itself.
-3. **`transferSui`**:
-   - Builds a Sui transaction.
-   - Hashes the transaction bytes.
-   - Sends the hash to Turnkey to be signed (`signRawPayload`).
-   - **Crucial Step**: Manually constructs the Sui Serialized Signature (Flag `0x00` + Signature + Public Key) because `Ed25519PublicKey.toSuiSignature()` is deprecated in newer Sui SDKs.
+### 2. Generic Move Calls
+The app includes a "Generic Move Call" card. This allows you to construct Programmable Transaction Blocks (PTBs) from JSON inputs.
+
+**Default Example (Self-Transfer):**
+The app defaults to calling `0x2::pay::split_and_transfer`. This splits 100 MIST from your gas coin and sends it back to you.
+
+*   **Target**: `0x2::pay::split_and_transfer`
+*   **Type Args**: `["0x2::sui::SUI"]`
+*   **Args**:
+    ```json
+    [
+      { "kind": "gas" },
+      { "kind": "u64", "value": "100" },
+      { "kind": "address", "value": "<YOUR_ADDRESS>" }
+    ]
+    ```
+
+---
+
+## Technical Implementation Details
+
+### Server-Side Signing (`src/lib/server-turnkey.ts`)
+The core logic resides here. We do not use the Turnkey Wallet on the frontend. Instead:
+1.  **Dynamic Key Fetching**: The server queries Turnkey for the `privateKey` details (Public Key + Address) using the ID in `.env`.
+2.  **PTB Construction**: We use `@mysten/sui` to build a transaction block based on the JSON args provided by the frontend.
+3.  **Hashing**: We hash the transaction bytes using `blake2b` with the Sui Intent Message.
+4.  **Signing**: We send the *hash* to Turnkey API (`signRawPayload`). Turnkey returns `r` and `s` values.
+5.  **Serialization**: We manually construct the Sui Signature because `toSuiSignature` is deprecated in newer SDKs.
+    *   Format: `Base64( Flag (0x00) + Signature (64b) + PublicKey (32b) )`
+
+### Handling Generic Arguments
+To support any Move call, we defined a custom `GenericMoveArg` type that maps JSON to Sui Transaction types:
+- `kind: "gas"` → `tx.gas`
+- `kind: "pure"` → `tx.pure(value)`
+- `kind: "string"` → `tx.pure.string(value)`
+- `kind: "u64"` → `tx.pure.u64(BigInt(value))`
+- `kind: "object"` → `tx.object(id)`
 
 ---
 
@@ -110,16 +147,10 @@ Open [http://localhost:3000](http://localhost:3000).
 - **Cause:** You are using the legacy `@turnkey/sdk-browser`.
 - **Fix:** This project uses the modern `@turnkey/react-wallet-kit`. Ensure you have run `yarn remove @turnkey/sdk-browser` if you migrated from an older tutorial.
 
-### Property `toSuiSignature` does not exist
-- **Cause:** Newer versions of `@mysten/sui` removed this helper method.
-- **Fix:** We implemented a manual `toSerializedSignature` helper in `src/lib/server-turnkey.ts` to concatenate the flag, signature, and public key bytes manually.
+### Error: `Dry run failed... VMVerificationOrDeserializationError`
+- **Cause:** You are trying to call a contract that doesn't exist on the current network (e.g., calling `devnet_nft` while on Testnet).
+- **Fix:** Use a contract that exists on Testnet (like `0x2::pay`) or switch the backend `suiClient` to use the Devnet URL.
 
----
-
-## Funding the Wallet
-Since this example uses a server-side key, you need to fund the **derived address**:
-1. Run the app and log in.
-2. Copy the **Address** shown in the dashboard.
-3. Go to the [Sui Discord Faucet](https://discord.gg/sui) (`#testnet-faucet` channel) and type:
-   `!faucet <YOUR_ADDRESS>`
-4. Click **Refresh** in the app to see your balance.
+### Error: `Invalid Pure type name`
+- **Cause:** You passed a string to `tx.pure()` without specifying it is a string.
+- **Fix:** Use `{ "kind": "string", "value": "..." }` in your arguments JSON.
