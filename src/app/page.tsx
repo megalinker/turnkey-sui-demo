@@ -16,14 +16,15 @@ export default function Home() {
   const [txStatus, setTxStatus] = useState("");
 
   // --- GENERIC MOVE CALL STATE ---
-  const [moveTarget, setMoveTarget] = useState("0x2::devnet_nft::mint");
+  const [moveTarget, setMoveTarget] = useState("0x2::pay::split_and_transfer");
+  const [moveTypeArgs, setMoveTypeArgs] = useState('["0x2::sui::SUI"]');
   // Pre-fill with arguments for the Devnet NFT example
   const [moveArgs, setMoveArgs] = useState(
     JSON.stringify(
       [
-        { kind: "pure", value: "Turnkey NFT" },
-        { kind: "pure", value: "Minted via Turnkey Server" },
-        { kind: "pure", value: "https://turnkey.com/images/og.png" },
+        { kind: "gas" },
+        { kind: "u64", value: "100" },
+        { kind: "address", value: "0x..." },
       ],
       null,
       2
@@ -41,6 +42,19 @@ export default function Home() {
       setWallet(null);
     }
   }, [isLoggedIn]);
+
+  useEffect(() => {
+    if (wallet?.address) {
+      // Update the "value" of the 3rd argument to be our own address
+      setMoveArgs((prev) => {
+        const args = JSON.parse(prev);
+        if (args[2].kind === "address") {
+          args[2].value = wallet.address;
+        }
+        return JSON.stringify(args, null, 2);
+      });
+    }
+  }, [wallet]);
 
   // 1. Fetch Wallet Data
   const fetchWallet = async () => {
@@ -80,12 +94,13 @@ export default function Home() {
   const handleMoveCall = async () => {
     setMoveStatus("Executing...");
     try {
-      // Parse the JSON text area
       let parsedArgs;
+      let parsedTypeArgs;
       try {
         parsedArgs = JSON.parse(moveArgs);
+        parsedTypeArgs = JSON.parse(moveTypeArgs);
       } catch (e) {
-        throw new Error("Invalid JSON in Arguments field");
+        throw new Error("Invalid JSON in Arguments or Type Arguments field");
       }
 
       const res = await fetch("/api/move-call", {
@@ -93,7 +108,7 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           target: moveTarget,
-          typeArguments: [],
+          typeArguments: parsedTypeArgs,
           args: parsedArgs,
         }),
       });
@@ -218,19 +233,16 @@ export default function Home() {
             </div>
           </div>
 
-          {/* 3. GENERIC MOVE CALL CARD */}
+          {/* GENERIC MOVE CALL CARD */}
           <div className="p-6 border border-gray-700 rounded-xl bg-gray-900 shadow-lg">
             <h2 className="text-xl font-bold mb-2">Generic Move Call</h2>
             <p className="text-xs text-gray-400 mb-4">
-              Execute any contract function on Sui Testnet. Defaults to minting a
-              Devnet NFT.
+              Execute any contract function. Defaults to <code>pay::split_and_transfer</code> (sending SUI via Move).
             </p>
 
             <div className="space-y-4">
               <div>
-                <label className="text-xs text-gray-400 block mb-1">
-                  Target (Package::Module::Function)
-                </label>
+                <label className="text-xs text-gray-400 block mb-1">Target (Package::Module::Function)</label>
                 <input
                   type="text"
                   value={moveTarget}
@@ -240,14 +252,22 @@ export default function Home() {
               </div>
 
               <div>
-                <label className="text-xs text-gray-400 block mb-1">
-                  Arguments (JSON Array)
-                </label>
+                <label className="text-xs text-gray-400 block mb-1">Type Arguments (JSON Array)</label>
+                <input
+                  type="text"
+                  value={moveTypeArgs}
+                  onChange={(e) => setMoveTypeArgs(e.target.value)}
+                  className="w-full p-2 rounded bg-gray-800 border border-gray-700 font-mono text-xs focus:border-purple-500 outline-none text-gray-300"
+                  placeholder='["0x2::sui::SUI"]'
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Arguments (JSON Array)</label>
                 <textarea
                   value={moveArgs}
                   onChange={(e) => setMoveArgs(e.target.value)}
                   className="w-full p-2 h-32 rounded bg-gray-800 border border-gray-700 font-mono text-xs focus:border-purple-500 outline-none"
-                  placeholder='[ { "kind": "pure", "value": "hello" } ]'
                 />
               </div>
 

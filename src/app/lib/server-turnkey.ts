@@ -117,9 +117,12 @@ export async function transferSui(to: string, amountSui: string) {
 
 // Define a type for incoming arguments so we know how to encode them for Sui
 export type GenericMoveArg =
-    | { kind: "object"; value: string }        // For Object IDs
-    | { kind: "pure"; value: any }             // For strings, numbers, booleans
-    | { kind: "u64"; value: string };          // Helper for BigInts passed as strings
+    | { kind: "object"; value: string }
+    | { kind: "u64"; value: string }
+    | { kind: "string"; value: string }
+    | { kind: "address"; value: string }
+    | { kind: "bool"; value: boolean }
+    | { kind: "gas"; value?: string };
 
 export async function executeGenericMoveCall(
     target: string,
@@ -137,13 +140,21 @@ export async function executeGenericMoveCall(
     // Convert our JSON args into Sui Transaction Arguments
     const txArgs = args.map((arg) => {
         switch (arg.kind) {
+            case "gas":
+                // <--- NEW: Pass the Gas Coin itself
+                return tx.gas;
             case "object":
-                return tx.object(arg.value);
+                return tx.object(arg.value!); // non-null assertion if value provided
             case "u64":
-                return tx.pure.u64(BigInt(arg.value));
-            case "pure":
+                return tx.pure.u64(BigInt(arg.value!));
+            case "string":
+                return tx.pure.string(arg.value!);
+            case "address":
+                return tx.pure.address(arg.value!);
+            case "bool":
+                return tx.pure.bool(arg.value!);
             default:
-                return tx.pure(arg.value);
+                throw new Error(`Unsupported argument kind: ${(arg as any).kind}`);
         }
     });
 
